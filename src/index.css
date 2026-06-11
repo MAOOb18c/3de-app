@@ -1,0 +1,76 @@
+/* =========================
+App.css
+========================= */
+
+body {
+  margin: 0;
+  background: #f3f4f6;
+  font-family: sans-serif;
+}
+
+.app {
+  padding: 20px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.version {
+  font-weight: bold;
+  color: #666;
+}
+
+.sample-buttons {
+  margin-bottom: 20px;
+}
+
+.sample-buttons button {
+  margin-right: 10px;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+}
+
+.sample-buttons button:hover {
+  background: #1d4ed8;
+}
+
+.card {
+  background: white;
+  padding: 20px;
+  border-radius: 16px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  background: #e5e7eb;
+}
+
+th,
+td {
+  border: 1px solid #d1d5db;
+  padding: 10px;
+  text-align: center;
+}
+
+.opinion {
+  text-align: left;
+}
+
+.user-row td {
+  background: #fef2f2 !important;
+  color: #b91c1c;
+  font-weight: 700;
+}
