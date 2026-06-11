@@ -2,12 +2,17 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import OpenAI from "openai";
+import { execFile } from "node:child_process";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 dotenv.config();
 
 const app = express();
+const execFileAsync = promisify(execFile);
+const serverFilePath = fileURLToPath(import.meta.url);
+const repositoryRoot = path.dirname(serverFilePath);
 const port = Number(process.env.PORT || 3001);
 const bearerToken = process.env.X_BEARER_TOKEN || process.env.X_API_KEY;
 const openAiApiKey = String(process.env.OPENAI_API_KEY || "").trim();
@@ -17,6 +22,128 @@ const openai = openAiApiKey ? new OpenAI({ apiKey: openAiApiKey }) : null;
 
 app.use(cors());
 app.use(express.json());
+
+const allowedPublishHosts = new Set(["localhost", "127.0.0.1"]);
+const npmCommand = process.platform === "win32" ? "cmd.exe" : "npm";
+const npmBuildArgs = process.platform === "win32" ? ["/d", "/s", "/c", "npm.cmd", "run", "build"] : ["run", "build"];
+
+async function runPublishCommand(command, args) {
+  const commandText = [command, ...args].join(" ");
+
+  try {
+    const result = await execFileAsync(command, args, {
+      cwd: repositoryRoot,
+      maxBuffer: 1024 * 1024 * 8,
+      shell: false,
+      windowsHide: true,
+    });
+
+    return {
+      ok: true,
+      command,
+      args,
+      commandText,
+      cwd: repositoryRoot,
+      exitCode: 0,
+      message: "",
+      stdout: result.stdout || "",
+      stderr: result.stderr || "",
+      output: [result.stdout, result.stderr].filter(Boolean).join("\n").trim(),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      command,
+      args,
+      commandText,
+      cwd: repositoryRoot,
+      exitCode: typeof error.code === "number" ? error.code : null,
+      message: error.message || "",
+      stdout: error.stdout || "",
+      stderr: error.stderr || "",
+      output: [error.stdout, error.stderr, error.message].filter(Boolean).join("\n").trim(),
+      code: error.code,
+      signal: error.signal || null,
+    };
+  }
+}
+
+function commandErrorDetails(result) {
+  return {
+    command: result.commandText,
+    cwd: result.cwd || repositoryRoot,
+    exitCode: result.exitCode,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    message: result.message || result.output || "",
+  };
+}
+
+function publishRequestIsAllowed(request) {
+  if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+    return { ok: false, reason: "公開APIはローカル開発環境でのみ実行できます。" };
+  }
+
+  const hostHeader = String(request.get("host") || "").split(":")[0];
+  const hostname = String(request.hostname || "").replace(/^\[|\]$/g, "");
+
+  if (!allowedPublishHosts.has(hostname) || !allowedPublishHosts.has(hostHeader)) {
+    return { ok: false, reason: "localhost または 127.0.0.1 からの実行のみ許可されています。" };
+  }
+
+  return { ok: true };
+}
+
+function parsePorcelainFiles(output = "") {
+  const files = output
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean)
+    .flatMap((filePath) => filePath.includes(" -> ") ? filePath.split(" -> ") : [filePath])
+    .map(normalizePublishFilePath)
+    .filter(Boolean);
+
+  return [...new Set(files)];
+}
+
+function normalizePublishFilePath(filePath = "") {
+  return String(filePath)
+    .trim()
+    .replace(/^"|"$/g, "")
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "");
+}
+
+function isEnvFile(filePath = "") {
+  const normalized = normalizePublishFilePath(filePath).toLowerCase();
+  const basename = normalized.split("/").pop() || "";
+
+  return basename === ".env" || basename.startsWith(".env.") || basename.endsWith(".env");
+}
+
+function isSensitivePublishFile(filePath = "") {
+  const normalized = normalizePublishFilePath(filePath).toLowerCase();
+  const basename = normalized.split("/").pop() || "";
+  const sensitiveNamePattern = /(^|[._-])(secret|secrets|credential|credentials|token|bearer|apikey|api-key|api_key|private-key|private_key)([._-]|$)/;
+
+  return (
+    isEnvFile(normalized) ||
+    sensitiveNamePattern.test(basename) ||
+    basename.endsWith(".pem") ||
+    basename.endsWith(".p12") ||
+    basename.endsWith(".pfx") ||
+    basename.endsWith(".key")
+  );
+}
+
+function containsEnvFile(filePaths = []) {
+  return filePaths.some(isEnvFile);
+}
+
+function removeSensitivePublishFiles(filePaths = []) {
+  return filePaths.map(normalizePublishFilePath).filter((filePath) => filePath && !isSensitivePublishFile(filePath));
+}
 
 function toPositiveInteger(value, fallback) {
   const parsed = Number(value);
@@ -268,6 +395,262 @@ function normalizeAnalysisDraftResult(value) {
 
 app.get("/api/health", (_request, response) => {
   response.json({ ok: true });
+});
+
+app.post("/api/publish-dry-run", async (request, response) => {
+  const permission = publishRequestIsAllowed(request);
+  if (!permission.ok) {
+    response.status(403).json({
+      ok: false,
+      stage: "forbidden",
+      message: permission.reason,
+    });
+    return;
+  }
+
+  const steps = [];
+  const runStep = async (stage, command, args) => {
+    const result = await runPublishCommand(command, args);
+    steps.push({
+      stage,
+      ok: result.ok,
+      output: result.output,
+    });
+    return result;
+  };
+
+  const buildResult = await runStep("ビルド中", npmCommand, npmBuildArgs);
+  if (!buildResult.ok) {
+    response.status(500).json({
+      ok: false,
+      stage: "ビルド中",
+      message: "公開テスト: npm run build に失敗しました。",
+      error: buildResult.output,
+      errorDetails: commandErrorDetails(buildResult),
+      buildOk: false,
+      commitExecuted: false,
+      pushExecuted: false,
+      steps,
+    });
+    return;
+  }
+
+  const statusResult = await runStep("確認中", "git", ["status", "--porcelain"]);
+  if (!statusResult.ok) {
+    response.status(500).json({
+      ok: false,
+      stage: "確認中",
+      message: "公開テスト: git status --porcelain に失敗しました。",
+      error: statusResult.output,
+      errorDetails: commandErrorDetails(statusResult),
+      buildOk: true,
+      commitExecuted: false,
+      pushExecuted: false,
+      steps,
+    });
+    return;
+  }
+
+  const rawChangedFiles = parsePorcelainFiles(statusResult.stdout);
+  const envIncluded = containsEnvFile(rawChangedFiles);
+  const changedFiles = removeSensitivePublishFiles(rawChangedFiles);
+
+  response.json({
+    ok: true,
+    stage: "完了",
+    message: envIncluded
+      ? "公開テストが完了しました。.env 系ファイルは結果表示から除外済みです。commit / push は実行していません。"
+      : "公開テストが完了しました。commit / push は実行していません。",
+    buildOk: true,
+    changedFiles,
+    envIncluded,
+    envDisplay: envIncluded ? "除外済み" : "なし",
+    commitExecuted: false,
+    pushExecuted: false,
+    steps,
+  });
+});
+
+app.post("/api/publish", async (request, response) => {
+  const permission = publishRequestIsAllowed(request);
+  if (!permission.ok) {
+    response.status(403).json({
+      ok: false,
+      stage: "forbidden",
+      message: permission.reason,
+    });
+    return;
+  }
+
+  const steps = [];
+  const runStep = async (stage, command, args) => {
+    const result = await runPublishCommand(command, args);
+    steps.push({
+      stage,
+      ok: result.ok,
+      output: result.output,
+    });
+    return result;
+  };
+
+  const buildResult = await runStep("ビルド中", npmCommand, npmBuildArgs);
+  if (!buildResult.ok) {
+    response.status(500).json({
+      ok: false,
+      stage: "ビルド中",
+      message: "npm run build に失敗しました。",
+      error: buildResult.output,
+      errorDetails: commandErrorDetails(buildResult),
+      steps,
+    });
+    return;
+  }
+
+  const statusResult = await runStep("変更確認中", "git", ["status", "--porcelain"]);
+  if (!statusResult.ok) {
+    response.status(500).json({
+      ok: false,
+      stage: "変更確認中",
+      message: "git status --porcelain に失敗しました。",
+      error: statusResult.output,
+      errorDetails: commandErrorDetails(statusResult),
+      steps,
+    });
+    return;
+  }
+
+  if (!statusResult.stdout.trim()) {
+    response.json({
+      ok: true,
+      stage: "完了",
+      message: "公開する変更はありません。",
+      steps,
+    });
+    return;
+  }
+
+  const gitIgnoreResult = await runStep("変更確認中", "git", ["check-ignore", ".env"]);
+  if (!gitIgnoreResult.ok) {
+    response.status(500).json({
+      ok: false,
+      stage: "変更確認中",
+      message: ".env が .gitignore で除外されていることを確認できませんでした。",
+      error: gitIgnoreResult.output,
+      errorDetails: commandErrorDetails(gitIgnoreResult),
+      steps,
+    });
+    return;
+  }
+
+  const rawChangedFiles = parsePorcelainFiles(statusResult.stdout);
+  const publishableFiles = removeSensitivePublishFiles(rawChangedFiles);
+  const excludedFiles = rawChangedFiles.filter((filePath) => !publishableFiles.includes(filePath));
+
+  if (publishableFiles.length === 0) {
+    response.json({
+      ok: true,
+      stage: "完了",
+      message: excludedFiles.length > 0
+        ? "公開対象にできる変更はありません。秘密情報を含む可能性があるファイルは除外しました。"
+        : "公開する変更はありません。",
+      changedFiles: [],
+      excludedFiles,
+      steps,
+    });
+    return;
+  }
+
+  const addResult = await runStep("コミット中", "git", [
+    "add",
+    "--",
+    ...publishableFiles,
+  ]);
+  if (!addResult.ok) {
+    response.status(500).json({
+      ok: false,
+      stage: "コミット中",
+      message: "git add に失敗しました。",
+      error: addResult.output,
+      errorDetails: commandErrorDetails(addResult),
+      changedFiles: publishableFiles,
+      excludedFiles,
+      steps,
+    });
+    return;
+  }
+
+  const stagedFilesResult = await runStep("コミット中", "git", ["diff", "--cached", "--name-only"]);
+  if (!stagedFilesResult.ok) {
+    response.status(500).json({
+      ok: false,
+      stage: "コミット中",
+      message: "ステージ済みファイルの確認に失敗しました。",
+      error: stagedFilesResult.output,
+      errorDetails: commandErrorDetails(stagedFilesResult),
+      steps,
+    });
+    return;
+  }
+
+  if (!stagedFilesResult.stdout.trim()) {
+    response.json({
+      ok: true,
+      stage: "完了",
+      message: "公開する変更はありません。",
+      steps,
+    });
+    return;
+  }
+
+  const forbiddenStagedFiles = stagedFilesResult.stdout
+    .split(/\r?\n/)
+    .map((filePath) => filePath.trim())
+    .filter(isSensitivePublishFile);
+
+  if (forbiddenStagedFiles.length > 0) {
+    response.status(500).json({
+      ok: false,
+      stage: "コミット中",
+      message: ".env 系ファイルがステージされているため停止しました。",
+      error: forbiddenStagedFiles.join("\n"),
+      steps,
+    });
+    return;
+  }
+
+  const commitResult = await runStep("コミット中", "git", ["commit", "-m", "Publish local updates"]);
+  if (!commitResult.ok) {
+    response.status(500).json({
+      ok: false,
+      stage: "コミット中",
+      message: "git commit に失敗しました。",
+      error: commitResult.output,
+      errorDetails: commandErrorDetails(commitResult),
+      steps,
+    });
+    return;
+  }
+
+  const pushResult = await runStep("GitHubへpush中", "git", ["push", "origin", "main"]);
+  if (!pushResult.ok) {
+    response.status(500).json({
+      ok: false,
+      stage: "GitHubへpush中",
+      message: "git push origin main に失敗しました。",
+      error: pushResult.output,
+      errorDetails: commandErrorDetails(pushResult),
+      steps,
+    });
+    return;
+  }
+
+  response.json({
+    ok: true,
+    stage: "完了",
+    message: "GitHubへpushしました。Vercelで自動デプロイが開始されます。",
+    vercelUrl: "https://3de-app.vercel.app",
+    steps,
+  });
 });
 
 app.get("/api/analysis-draft/health", (_request, response) => {

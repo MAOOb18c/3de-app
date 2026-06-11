@@ -7,15 +7,16 @@ const API_BASE_URL = import.meta.env.DEV
   ? import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_3DE_API_BASE || "http://localhost:3001"
   : "";
 const PUBLIC_PREVIEW_MODE = String(import.meta.env.VITE_PUBLIC_PREVIEW || "").toLowerCase() === "true";
+const LOCAL_PUBLISH_AVAILABLE = import.meta.env.DEV;
 const PUBLIC_PREVIEW_MAX_X_FETCH = 200;
 const DEFAULT_MAX_X_FETCH = 1000;
 const X_DATASET_HISTORY_STORAGE_KEY = "3de_x_dataset_history_v1";
-const SIDEBAR_WIDTH_STORAGE_KEY = "3de_sidebar_width_v1";
+const SIDEBAR_WIDTH_STORAGE_KEY = "3de_sidebar_width_v2";
 const VIEW_MODE_STORAGE_KEY = "3de_view_mode";
 const MAX_X_DATASET_HISTORY = 10;
 const MAX_CLUSTER_RUN_HISTORY = 10;
-const SIDEBAR_MIN_WIDTH = 220;
-const SIDEBAR_DEFAULT_WIDTH = 320;
+const SIDEBAR_MIN_WIDTH = 360;
+const SIDEBAR_DEFAULT_WIDTH = 380;
 const SIDEBAR_MAX_VIEWPORT_RATIO = 0.45;
 const VOLUME_COLOR_SCALE = [
   [0, "#2563eb"],
@@ -5328,6 +5329,20 @@ export default function App() {
   const [copyStatus, setCopyStatus] = useState("");
   const [operationStatus, setOperationStatus] = useState(() => createInitialOperationStatus());
   const [toast, setToast] = useState(null);
+  const [publishStatus, setPublishStatus] = useState({
+    status: "idle",
+    mode: "",
+    stage: "",
+    message: "未実行",
+    error: "",
+    steps: [],
+    changedFiles: [],
+    buildOk: null,
+    envIncluded: false,
+    commitExecuted: false,
+    pushExecuted: false,
+    vercelUrl: "https://3de-app.vercel.app",
+  });
   const [queryDirty, setQueryDirty] = useState(false);
   const [scoreDisplayMode, setScoreDisplayMode] = useState("relative");
   const [isNoiseFilteringDisabled, setIsNoiseFilteringDisabled] = useState(false);
@@ -5378,9 +5393,10 @@ export default function App() {
       return SIDEBAR_DEFAULT_WIDTH;
     }
 
-    const savedWidth = Number(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+    const savedSidebarWidth = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    const savedWidth = Number(savedSidebarWidth);
 
-    if (!Number.isFinite(savedWidth)) {
+    if (savedSidebarWidth === null || !Number.isFinite(savedWidth) || savedWidth < SIDEBAR_MIN_WIDTH) {
       return SIDEBAR_DEFAULT_WIDTH;
     }
 
@@ -11291,6 +11307,280 @@ export default function App() {
     );
   }
 
+  function formatPublishErrorDetails(payload, fallbackMessage) {
+    const details = payload?.errorDetails;
+    if (details && typeof details === "object") {
+      return [
+        `command: ${details.command || "-"}`,
+        `cwd: ${details.cwd || "-"}`,
+        `exitCode: ${details.exitCode ?? "-"}`,
+        "stdout:",
+        details.stdout || "(empty)",
+        "stderr:",
+        details.stderr || "(empty)",
+        `message: ${details.message || payload?.message || fallbackMessage || "-"}`,
+      ].join("\n");
+    }
+
+    return [
+      payload?.error,
+      payload?.message,
+      fallbackMessage,
+    ].filter(Boolean).join("\n") || "詳細はありません。";
+  }
+
+  async function handlePublishLocalUpdates() {
+    if (!LOCAL_PUBLISH_AVAILABLE || publishStatus.status === "running") {
+      return;
+    }
+
+    const confirmed = window.confirm("現在のローカル修正をGitHub mainへpushし、Vercel公開URLへ反映します。よろしいですか？");
+    if (!confirmed) {
+      return;
+    }
+
+    setPublishStatus({
+      status: "running",
+      mode: "publish",
+      stage: "ビルド中",
+      message: "公開反映を開始しました。",
+      error: "",
+      steps: [],
+      changedFiles: [],
+      buildOk: null,
+      envIncluded: false,
+      commitExecuted: false,
+      pushExecuted: false,
+      vercelUrl: "https://3de-app.vercel.app",
+    });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/publish`, {
+        method: "POST",
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok || !payload.ok) {
+        setPublishStatus({
+          status: "error",
+          mode: "publish",
+          stage: payload.stage || "失敗",
+          message: payload.message || "公開反映に失敗しました。",
+          error: formatPublishErrorDetails(payload, `HTTP ${response.status}`),
+          steps: payload.steps || [],
+          changedFiles: payload.changedFiles || [],
+          buildOk: payload.buildOk ?? null,
+          envIncluded: Boolean(payload.envIncluded),
+          commitExecuted: Boolean(payload.commitExecuted),
+          pushExecuted: Boolean(payload.pushExecuted),
+          vercelUrl: payload.vercelUrl || "https://3de-app.vercel.app",
+        });
+        return;
+      }
+
+      setPublishStatus({
+        status: "success",
+        mode: "publish",
+        stage: payload.stage || "完了",
+        message: "公開へ反映が完了しました。GitHubへpushしました。Vercelで自動デプロイが開始されます。VercelのDeploymentsで確認してください。",
+        error: "",
+        steps: payload.steps || [],
+        changedFiles: payload.changedFiles || [],
+        buildOk: payload.buildOk ?? true,
+        envIncluded: Boolean(payload.envIncluded),
+        commitExecuted: true,
+        pushExecuted: true,
+        vercelUrl: payload.vercelUrl || "https://3de-app.vercel.app",
+      });
+    } catch (error) {
+      setPublishStatus({
+        status: "error",
+        mode: "publish",
+        stage: "失敗",
+        message: "公開反映APIへの接続に失敗しました。",
+        error: error.message || String(error),
+        steps: [],
+        changedFiles: [],
+        buildOk: null,
+        envIncluded: false,
+        commitExecuted: false,
+        pushExecuted: false,
+        vercelUrl: "https://3de-app.vercel.app",
+      });
+    }
+  }
+
+  async function handlePublishDryRun() {
+    if (!LOCAL_PUBLISH_AVAILABLE || publishStatus.status === "running") {
+      return;
+    }
+
+    setPublishStatus({
+      status: "running",
+      mode: "dry-run",
+      stage: "ビルド中",
+      message: "公開テストを開始しました。",
+      error: "",
+      steps: [],
+      changedFiles: [],
+      buildOk: null,
+      envIncluded: false,
+      commitExecuted: false,
+      pushExecuted: false,
+      vercelUrl: "https://3de-app.vercel.app",
+    });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/publish-dry-run`, {
+        method: "POST",
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok || !payload.ok) {
+        setPublishStatus({
+          status: "error",
+          mode: "dry-run",
+          stage: payload.stage || "失敗",
+          message: payload.message || "公開テストに失敗しました。",
+          error: formatPublishErrorDetails(payload, `HTTP ${response.status}`),
+          steps: payload.steps || [],
+          changedFiles: payload.changedFiles || [],
+          buildOk: payload.buildOk ?? false,
+          envIncluded: Boolean(payload.envIncluded),
+          commitExecuted: Boolean(payload.commitExecuted),
+          pushExecuted: Boolean(payload.pushExecuted),
+          vercelUrl: "https://3de-app.vercel.app",
+        });
+        return;
+      }
+
+      setPublishStatus({
+        status: "success",
+        mode: "dry-run",
+        stage: "完了",
+        message: "公開テストが完了しました。commit / push は実行していません。",
+        error: "",
+        steps: payload.steps || [],
+        changedFiles: payload.changedFiles || [],
+        buildOk: Boolean(payload.buildOk),
+        envIncluded: Boolean(payload.envIncluded),
+        commitExecuted: Boolean(payload.commitExecuted),
+        pushExecuted: Boolean(payload.pushExecuted),
+        vercelUrl: "https://3de-app.vercel.app",
+      });
+    } catch (error) {
+      setPublishStatus({
+        status: "error",
+        mode: "dry-run",
+        stage: "失敗",
+        message: "公開テストAPIへの接続に失敗しました。",
+        error: error.message || String(error),
+        steps: [],
+        changedFiles: [],
+        buildOk: null,
+        envIncluded: false,
+        commitExecuted: false,
+        pushExecuted: false,
+        vercelUrl: "https://3de-app.vercel.app",
+      });
+    }
+  }
+
+  async function copyPublishError() {
+    if (!publishStatus.error) return;
+
+    try {
+      await navigator.clipboard.writeText(publishStatus.error);
+      setToast({ type: "success", message: "公開反映エラーをコピーしました。" });
+    } catch (_error) {
+      setToast({ type: "error", message: "公開反映エラーをコピーできませんでした。" });
+    }
+  }
+
+  function renderLocalPublishPanel() {
+    if (!LOCAL_PUBLISH_AVAILABLE) {
+      return null;
+    }
+
+    const isRunning = publishStatus.status === "running";
+    const dryRunIsCurrent = publishStatus.mode === "dry-run" && publishStatus.status !== "idle";
+    const publishIsCurrent = publishStatus.mode === "publish" && publishStatus.status !== "idle";
+    const activeStages = publishStatus.mode === "dry-run"
+      ? ["ビルド中", "確認中", "完了", "失敗"]
+      : ["ビルド中", "変更確認中", "コミット中", "GitHubへpush中", "完了", "失敗"];
+
+    return (
+      <div className={`local-publish-panel ${publishStatus.status}`}>
+        <div className="local-publish-header">
+          <strong>ローカル公開反映</strong>
+          <span>{publishStatus.stage || publishStatus.message}</span>
+        </div>
+        <div className="local-publish-buttons">
+          <button
+            type="button"
+            className={`local-publish-test-button ${dryRunIsCurrent ? "active" : ""}`}
+            onClick={handlePublishDryRun}
+            disabled={isRunning}
+            aria-pressed={dryRunIsCurrent}
+          >
+            {isRunning && publishStatus.mode === "dry-run" ? "公開テスト中" : "公開テスト"}
+          </button>
+          <button
+            type="button"
+            className={`local-publish-button ${publishIsCurrent ? "active" : ""}`}
+            onClick={handlePublishLocalUpdates}
+            disabled={isRunning}
+            aria-pressed={publishIsCurrent}
+          >
+            {isRunning && publishStatus.mode === "publish" ? "公開反映中" : "公開へ反映"}
+          </button>
+        </div>
+        <div className="local-publish-stages" aria-label="公開反映ステータス">
+          {activeStages.map((stage) => (
+            <span
+              key={stage}
+              className={
+                publishStatus.stage === stage ||
+                (publishStatus.status === "success" && stage === "完了") ||
+                (publishStatus.status === "error" && stage === "失敗")
+                  ? "active"
+                  : ""
+              }
+            >
+              {stage}
+            </span>
+          ))}
+        </div>
+        <p className="local-publish-message">{publishStatus.message}</p>
+        {publishStatus.mode === "dry-run" && publishStatus.status !== "idle" && (
+          <div className="local-publish-dry-run-result">
+            <div><strong>build</strong><span>{publishStatus.buildOk ? "成功" : publishStatus.buildOk === false ? "失敗" : "未確認"}</span></div>
+            <div><strong>.env</strong><span>{publishStatus.envIncluded ? ".env 系ファイルは除外済み" : ".env 系ファイルなし"}</span></div>
+            <div><strong>commit</strong><span>{publishStatus.commitExecuted ? "実行済み" : "未実行"}</span></div>
+            <div><strong>push</strong><span>{publishStatus.pushExecuted ? "実行済み" : "未実行"}</span></div>
+            <div className="local-publish-changed-files">
+              <strong>変更ファイル</strong>
+              <span>{publishStatus.changedFiles.length > 0 ? publishStatus.changedFiles.join("\n") : "なし"}</span>
+            </div>
+          </div>
+        )}
+        {publishStatus.status === "success" && publishStatus.mode === "publish" && (
+          <a href={publishStatus.vercelUrl} target="_blank" rel="noreferrer">
+            公開URLを開く
+          </a>
+        )}
+        {publishStatus.error && (
+          <div className="local-publish-error">
+            <pre>{publishStatus.error}</pre>
+            <button type="button" className="x-small-button" onClick={copyPublishError}>
+              エラー内容をコピー
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function dashboardStatusItems() {
     const saveDatasetStatus = actionButtonStatus("saveDataset");
     const saveClusterStatus = actionButtonStatus("saveCluster");
@@ -11493,6 +11783,7 @@ export default function App() {
                     強制ストップ
                   </button>
                 )}
+                {renderLocalPublishPanel()}
               </div>
             </div>
           </div>
