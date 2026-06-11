@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import OpenAI from "openai";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 dotenv.config();
 
@@ -964,6 +966,13 @@ app.post("/api/cluster-summary", async (request, response) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`3DE X API server running at http://localhost:${port}`);
-});
+export default app;
+
+const currentFilePath = fileURLToPath(import.meta.url);
+const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === currentFilePath;
+
+if (isDirectRun) {
+  app.listen(port, () => {
+    console.log(`3DE X API server running at http://localhost:${port}`);
+  });
+}
