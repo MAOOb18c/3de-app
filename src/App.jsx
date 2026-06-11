@@ -3,7 +3,9 @@ import Plotly from "plotly.js-dist-min";
 import "./App.css";
 
 const APP_VERSION = "3DE MVP v3.97 Open Public Preview 200 Fetch";
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_3DE_API_BASE || "http://localhost:3001";
+const API_BASE_URL = import.meta.env.DEV
+  ? import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_3DE_API_BASE || "http://localhost:3001"
+  : "";
 const PUBLIC_PREVIEW_MODE = String(import.meta.env.VITE_PUBLIC_PREVIEW || "").toLowerCase() === "true";
 const PUBLIC_PREVIEW_MAX_X_FETCH = 200;
 const DEFAULT_MAX_X_FETCH = 1000;
