@@ -11508,6 +11508,21 @@ export default function App() {
     const activeStages = publishStatus.mode === "dry-run"
       ? ["ビルド中", "確認中", "完了", "失敗"]
       : ["ビルド中", "変更確認中", "コミット中", "GitHubへpush中", "完了", "失敗"];
+    const stageClassName = (stage) => {
+      if (publishStatus.status === "success" && stage === "完了") {
+        return "done";
+      }
+
+      if (publishStatus.status === "error" && stage === "失敗") {
+        return "error";
+      }
+
+      if (publishStatus.status === "running" && publishStatus.stage === stage) {
+        return "running";
+      }
+
+      return "pending";
+    };
 
     return (
       <div className={`local-publish-panel ${publishStatus.status}`}>
@@ -11539,13 +11554,7 @@ export default function App() {
           {activeStages.map((stage) => (
             <span
               key={stage}
-              className={
-                publishStatus.stage === stage ||
-                (publishStatus.status === "success" && stage === "完了") ||
-                (publishStatus.status === "error" && stage === "失敗")
-                  ? "active"
-                  : ""
-              }
+              className={stageClassName(stage)}
             >
               {stage}
             </span>
