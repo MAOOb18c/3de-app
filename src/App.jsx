@@ -14,9 +14,9 @@ const SIDEBAR_WIDTH_STORAGE_KEY = "3de_sidebar_width_v1";
 const VIEW_MODE_STORAGE_KEY = "3de_view_mode";
 const MAX_X_DATASET_HISTORY = 10;
 const MAX_CLUSTER_RUN_HISTORY = 10;
-const SIDEBAR_MIN_WIDTH = 280;
-const SIDEBAR_MAX_WIDTH = 520;
-const SIDEBAR_DEFAULT_WIDTH = 360;
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_DEFAULT_WIDTH = 320;
+const SIDEBAR_MAX_VIEWPORT_RATIO = 0.45;
 const VOLUME_COLOR_SCALE = [
   [0, "#2563eb"],
   [0.5, "#f59e0b"],
@@ -215,6 +215,18 @@ const VOICE_DIRECTION_KEY_ALIASES = {
   "反対意見": "opposingOpinions",
 };
 const DEFAULT_PERSONA_A_VOICE_DIRECTIONS = ["empatheticVoices", "differentViewpoints", "adviceHints"];
+
+function sidebarMaxWidth() {
+  if (typeof window === "undefined") {
+    return 640;
+  }
+
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.floor(window.innerWidth * SIDEBAR_MAX_VIEWPORT_RATIO));
+}
+
+function clampSidebarWidth(width) {
+  return Math.min(sidebarMaxWidth(), Math.max(SIDEBAR_MIN_WIDTH, width));
+}
 
 const ANALYSIS_PURPOSE_CONFIGS = {
   empathy: {
@@ -5372,7 +5384,7 @@ export default function App() {
       return SIDEBAR_DEFAULT_WIDTH;
     }
 
-    return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, savedWidth));
+    return clampSidebarWidth(savedWidth);
   });
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
 
@@ -5631,7 +5643,7 @@ export default function App() {
     }
 
     function handleSidebarMouseMove(event) {
-      const nextWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, event.clientX));
+      const nextWidth = clampSidebarWidth(event.clientX);
       setSidebarWidth(nextWidth);
       window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(nextWidth)));
     }
@@ -5650,6 +5662,19 @@ export default function App() {
       window.removeEventListener("mouseup", handleSidebarMouseUp);
     };
   }, [isSidebarResizing]);
+
+  useEffect(() => {
+    function handleWindowResize() {
+      setSidebarWidth((currentWidth) => {
+        const nextWidth = clampSidebarWidth(currentWidth);
+        window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(nextWidth)));
+        return nextWidth;
+      });
+    }
+
+    window.addEventListener("resize", handleWindowResize);
+    return () => window.removeEventListener("resize", handleWindowResize);
+  }, []);
 
   function loadSample(key) {
     const nextSample = samples[key];
@@ -13387,7 +13412,10 @@ export default function App() {
             className="sidebar-resize-handle"
             aria-label="サイドバー幅を調整"
             title="ドラッグでサイドバー幅を調整"
-            onMouseDown={() => setIsSidebarResizing(true)}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              setIsSidebarResizing(true);
+            }}
           />
         </aside>
 
