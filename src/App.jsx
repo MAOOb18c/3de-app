@@ -5275,7 +5275,140 @@ function buildUserFeedback({
   };
 }
 
+function GuidePage() {
+  const guideSections = [
+    {
+      title: "3DEとは？",
+      body: [
+        "自分の意見と、外部の多様な意見を比べるためのツールです。",
+        "どの意見が多いか、どの意見が深いか、どの意見が長期視点を含むかを見やすくします。",
+        "単なるアンケートではなく、意見の広がりや位置関係を可視化するものです。",
+      ],
+    },
+    {
+      title: "画面の構成",
+      body: [
+        "3DEの画面は、大きく分けて次のエリアで構成されています。",
+        "上部ヘッダー：現在のモードや主要な操作ボタンが並ぶ場所です。表示切替、スコアリング、分析結果の確認など、全体操作に使います。",
+        "左側の操作パネル：テーマ、自分の意見、X取得、保存、設定などを扱う場所です。入力や操作は主にここから行います。左パネルはドラッグで幅を調整できます。",
+        "中央のメイン表示エリア：外部意見、評価結果、クラスタ、フィードバックなどを見る場所です。3DEの分析結果を確認する中心エリアです。",
+        "評価軸・スコア表示エリア：X軸、Y軸、Z軸などの評価軸や、各意見のスコアを確認する場所です。「人数・拡散量」「議論の深さ」「視座の高さ」などを見ます。",
+        "Zone表示・フィードバックエリア：Zone11など、分析結果から得られたフィードバックを見る場所です。自分の意見と外部意見の違いや、次に考える視点を確認します。",
+        "保存・コピー関連：Xデータ保存、クラスタ保存、分析結果コピーなどを行う場所です。保存内容は原則として、このブラウザ内に保存されます。",
+        "最初はすべての機能を使う必要はありません。まずは「テーマ」「自分の意見」「外部意見」「Zone11のフィードバック」を見るだけで十分です。",
+        "詳細な設定や保存機能は、慣れてから使ってください。現時点ではPC画面での利用を推奨しています。",
+      ],
+    },
+    {
+      title: "まず見る場所",
+      body: [
+        "現在のテーマ：いま分析している話題です。",
+        "自分の意見：比較の基準になるあなた側の意見です。",
+        "現在の分析対象の概要：外部意見の量や状態を確認します。",
+        "評価軸：意見をどう見るかの物差しです。",
+      ],
+    },
+    {
+      title: "基本の流れ",
+      steps: [
+        "テーマと自分の意見を確認する",
+        "評価軸を確認する",
+        "Xから外部意見を取得する",
+        "必要に応じてスコアリングする",
+        "クラスタリング・AI要約を見る",
+        "Zone11のフィードバックを見る",
+      ],
+    },
+    {
+      title: "画面上の主なボタン",
+      body: [
+        "Xデータ保存：取得したXの投稿データを作業用に保存します。",
+        "クラスタ保存：似た意見ごとのまとまりを保存します。",
+        "分析結果コピー：現在の分析結果を文章としてクリップボードにコピーします。",
+        "スコア / 絶対 / 相対：スコアの見方を切り替えます。",
+        "表示 / 最終結果：処理前後や最終結果の見え方を切り替えます。",
+      ],
+    },
+    {
+      title: "データの保存場所について",
+      body: [
+        "3DEで保存したXデータ、クラスタ、分析結果などは、原則として利用者本人のブラウザ内に保存されます。",
+        "サーバーや外部データベースに自動共有されるものではありません。",
+        "他の人が同じURLを開いても、あなたの保存データがそのまま見えるわけではありません。",
+        "同じPC・同じブラウザでは保存内容を再利用できます。",
+        "別のPC、別のブラウザ、シークレットモードでは保存内容は引き継がれない場合があります。",
+        "ブラウザの閲覧データやサイトデータを削除すると、保存内容も消える場合があります。",
+        "秘密性の高い内容を扱う場合は、共有PCでは使わないでください。",
+        "3DEは現時点では、各ユーザーが自分の端末上で分析を試すためのプレビュー版です。",
+      ],
+    },
+    {
+      title: "評価軸の意味",
+      body: [
+        "X：人数・拡散量。どれくらい多くの人や反応があるかを見ます。",
+        "Y：議論の深さ。理由や背景まで考えられているかを見ます。",
+        "Z：視座の高さ。短期だけでなく、長期や社会全体の視点を含むかを見ます。",
+      ],
+    },
+    {
+      title: "注意点",
+      body: [
+        "X取得は検索条件によって結果が変わります。",
+        "ノイズや重複が含まれることがあります。",
+        "3DEは正解を出すものではなく、意見の構造を見やすくするものです。",
+        "現時点ではPC利用推奨です。スマホ表示は今後対応予定です。",
+      ],
+    },
+    {
+      title: "最初に試すおすすめ操作",
+      body: [
+        "まずは現在表示されているサンプルを眺めます。",
+        "次に「Xから取得して外部意見欄に反映」を押します。",
+        "その後、Zone11のフィードバックを見て、意見空間の偏りや次の問いを確認します。",
+      ],
+    },
+  ];
+
+  return (
+    <main className="guide-page">
+      <div className="guide-shell">
+        <nav className="guide-nav" aria-label="使い方ページのナビゲーション">
+          <a href="/" className="guide-back-link">3DEに戻る</a>
+        </nav>
+        <header className="guide-hero">
+          <p>初めて使う人のためのクイックガイド</p>
+          <h1>3DEの使い方</h1>
+          <span>意見の量、深さ、視点の高さを並べて見ながら、いまのテーマを立体的に捉えるためのページです。</span>
+        </header>
+        <section className="guide-grid" aria-label="3DEの使い方">
+          {guideSections.map((section) => (
+            <article key={section.title} className="guide-card">
+              <h2>{section.title}</h2>
+              {section.steps ? (
+                <ol>
+                  {section.steps.map((item) => <li key={item}>{item}</li>)}
+                </ol>
+              ) : (
+                <ul>
+                  {section.body.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              )}
+            </article>
+          ))}
+        </section>
+        <div className="guide-footer">
+          <a href="/" className="guide-primary-link">3DEに戻る</a>
+        </div>
+      </div>
+    </main>
+  );
+}
+
 export default function App() {
+  if (typeof window !== "undefined" && window.location.pathname === "/guide") {
+    return <GuidePage />;
+  }
+
   const [sampleKey, setSampleKey] = useState("housing");
   const [personaMode, setPersonaMode] = useState("dev");
   const [personaModeHistory, setPersonaModeHistory] = useState([]);
@@ -11788,6 +11921,9 @@ export default function App() {
               <span className="zone-zero-axis-summary" title={axisExplanationItems(axisConfig).map((item) => `${item.axis.toUpperCase()}：${item.label} - ${item.description}`).join("\n")}>
                 軸：{zone0AxisSummary()}
               </span>
+              <a href="/guide" className="guide-entry-link">
+                使い方を見る
+              </a>
             </div>
 
             <div className="zone0-status-block" aria-label="Zone? 状態チップ">
@@ -11844,6 +11980,7 @@ export default function App() {
               </div>
               <div className="zone-zero-actions">
                 <span className="zone0-block-label">実行</span>
+                <span className="browser-storage-note">保存内容はこのブラウザ内に保存されます。他の人には共有されません。</span>
                 {renderActionStatusButton("saveDataset")}
                 {renderActionStatusButton("saveCluster")}
                 {renderActionStatusButton("copyAnalysis")}
