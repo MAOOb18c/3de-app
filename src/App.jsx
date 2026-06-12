@@ -11382,7 +11382,7 @@ export default function App() {
         status: "success",
         mode: "publish",
         stage: payload.stage || "完了",
-        message: "公開へ反映が完了しました。GitHubへpushしました。Vercelで自動デプロイが開始されます。VercelのDeploymentsで確認してください。",
+        message: "公開へ反映が完了しました。GitHubへpushしました。Vercelで自動デプロイが開始されます。",
         error: "",
         steps: payload.steps || [],
         changedFiles: payload.changedFiles || [],
@@ -11505,23 +11505,74 @@ export default function App() {
     const isRunning = publishStatus.status === "running";
     const dryRunIsCurrent = publishStatus.mode === "dry-run" && publishStatus.status !== "idle";
     const publishIsCurrent = publishStatus.mode === "publish" && publishStatus.status !== "idle";
-    const activeStages = publishStatus.mode === "dry-run"
-      ? ["ビルド中", "確認中", "完了", "失敗"]
-      : ["ビルド中", "変更確認中", "コミット中", "GitHubへpush中", "完了", "失敗"];
-    const stageClassName = (stage) => {
-      if (publishStatus.status === "success" && stage === "完了") {
-        return "done";
+    const stageKeyFromName = (stage) => {
+      if (stage === "ビルド中") return "build";
+      if (stage === "確認中" || stage === "変更確認中") return "check";
+      if (stage === "コミット中") return "commit";
+      if (stage === "GitHubへpush中") return "push";
+      if (stage === "完了") return "complete";
+      if (stage === "失敗") return "error";
+      return "";
+    };
+    const publishStageItems = () => {
+      const mode = publishStatus.mode;
+      const runningKey = publishStatus.status === "running" ? stageKeyFromName(publishStatus.stage) : "";
+      const failedKey = publishStatus.status === "error" ? stageKeyFromName(publishStatus.stage) || "error" : "";
+      const completedStepKeys = new Set(
+        (publishStatus.steps || [])
+          .filter((step) => step?.ok)
+          .map((step) => stageKeyFromName(step.stage))
+          .filter(Boolean)
+      );
+      const done = (key) => {
+        if (publishStatus.status === "success") {
+          if (mode === "dry-run") {
+            return key === "build" || key === "check" || key === "complete";
+          }
+
+          return key === "build" || key === "check" || key === "commit" || key === "push" || key === "complete";
+        }
+
+        return completedStepKeys.has(key);
+      };
+      const statusFor = (key) => {
+        if (failedKey === key || (failedKey === "error" && key === "complete")) return "error";
+        if (runningKey === key) return "running";
+        if (done(key)) return "done";
+        return "pending";
+      };
+      const labelFor = (key, runningLabel, doneLabel, pendingLabel = runningLabel) => {
+        const status = statusFor(key);
+        if (status === "running") return runningLabel;
+        if (status === "done") return doneLabel;
+        return pendingLabel;
+      };
+
+      const baseStages = [
+        { key: "build", label: labelFor("build", "ビルド中", "ビルド完了", "ビルド未実行"), status: statusFor("build") },
+        { key: "check", label: labelFor("check", "確認中", "確認完了", "確認未実行"), status: statusFor("check") },
+      ];
+
+      if (mode === "dry-run") {
+        return [
+          ...baseStages,
+          { key: "complete", label: statusFor("complete") === "done" ? "公開テスト完了" : statusFor("complete") === "error" ? "失敗" : "完了待ち", status: statusFor("complete") },
+        ];
       }
 
-      if (publishStatus.status === "error" && stage === "失敗") {
-        return "error";
-      }
-
-      if (publishStatus.status === "running" && publishStatus.stage === stage) {
-        return "running";
-      }
-
-      return "pending";
+      return [
+        ...baseStages,
+        { key: "commit", label: labelFor("commit", "コミット中", "コミット完了", "コミット未実行"), status: statusFor("commit") },
+        { key: "push", label: labelFor("push", "GitHub push中", "GitHub push完了", "GitHub push未実行"), status: statusFor("push") },
+        { key: "complete", label: statusFor("complete") === "done" ? "公開反映完了" : statusFor("complete") === "error" ? "失敗" : "完了待ち", status: statusFor("complete") },
+      ];
+    };
+    const publishStepSucceeded = (stepKey) => (publishStatus.steps || [])
+      .some((step) => step?.ok && stageKeyFromName(step.stage) === stepKey);
+    const publishResultLabel = (done) => {
+      if (publishStatus.status === "running") return "確認中";
+      if (publishStatus.status === "error" && !done) return "失敗";
+      return done ? "成功" : "未確認";
     };
 
     return (
@@ -11551,12 +11602,12 @@ export default function App() {
           </button>
         </div>
         <div className="local-publish-stages" aria-label="公開反映ステータス">
-          {activeStages.map((stage) => (
+          {publishStageItems().map((stage) => (
             <span
-              key={stage}
-              className={stageClassName(stage)}
+              key={stage.key}
+              className={stage.status}
             >
-              {stage}
+              {stage.label}
             </span>
           ))}
         </div>
@@ -11565,8 +11616,17 @@ export default function App() {
           <div className="local-publish-dry-run-result">
             <div><strong>build</strong><span>{publishStatus.buildOk ? "成功" : publishStatus.buildOk === false ? "失敗" : "未確認"}</span></div>
             <div><strong>.env</strong><span>{publishStatus.envIncluded ? ".env 系ファイルは除外済み" : ".env 系ファイルなし"}</span></div>
-            <div><strong>commit</strong><span>{publishStatus.commitExecuted ? "実行済み" : "未実行"}</span></div>
-            <div><strong>push</strong><span>{publishStatus.pushExecuted ? "実行済み" : "未実行"}</span></div>
+            <div className="local-publish-changed-files">
+              <strong>変更ファイル</strong>
+              <span>{publishStatus.changedFiles.length > 0 ? publishStatus.changedFiles.join("\n") : "なし"}</span>
+            </div>
+          </div>
+        )}
+        {publishStatus.mode === "publish" && publishStatus.status !== "idle" && (
+          <div className="local-publish-dry-run-result">
+            <div><strong>build</strong><span>{publishResultLabel(publishStatus.buildOk === true || publishStepSucceeded("build"))}</span></div>
+            <div><strong>commit</strong><span>{publishResultLabel(publishStatus.commitExecuted || publishStepSucceeded("commit"))}</span></div>
+            <div><strong>push</strong><span>{publishResultLabel(publishStatus.pushExecuted || publishStepSucceeded("push"))}</span></div>
             <div className="local-publish-changed-files">
               <strong>変更ファイル</strong>
               <span>{publishStatus.changedFiles.length > 0 ? publishStatus.changedFiles.join("\n") : "なし"}</span>
