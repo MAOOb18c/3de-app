@@ -317,6 +317,82 @@ function parseJsonObject(value) {
   }
 }
 
+function sanitizeAiErrorDetail(value, maxLength = 1000) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function createAiErrorPayload(errorType, message, options = {}) {
+  return {
+    ok: false,
+    error: message,
+    message,
+    errorType,
+    details: sanitizeAiErrorDetail(options.details || message),
+    code: options.code || "AI_DRAFT_ERROR",
+    model: openAiSummaryModel,
+  };
+}
+
+function classifyOpenAiError(error) {
+  const status = Number(error?.status || error?.response?.status || 500);
+  const rawCode = String(error?.code || error?.error?.code || "");
+  const rawType = String(error?.type || error?.error?.type || "");
+  const rawMessage = sanitizeAiErrorDetail(error?.message || error?.error?.message || "OpenAI request failed.");
+  const combined = `${status} ${rawCode} ${rawType} ${rawMessage}`.toLowerCase();
+
+  if (status === 401 || /auth|unauthorized|api.?key|invalid.?key/.test(combined)) {
+    return {
+      status: status || 401,
+      payload: createAiErrorPayload("auth_error", "OpenAI authentication failed. Check OPENAI_API_KEY.", {
+        details: rawMessage,
+        code: rawCode || "OPENAI_AUTH_ERROR",
+      }),
+    };
+  }
+
+  if (status === 403 || /billing|quota|insufficient_quota|permission|project/.test(combined)) {
+    return {
+      status: status || 403,
+      payload: createAiErrorPayload(
+        "quota_or_billing",
+        "OpenAI permission, billing, or quota blocked AI generation.",
+        {
+          details: rawMessage,
+          code: rawCode || "OPENAI_QUOTA_OR_BILLING",
+        }
+      ),
+    };
+  }
+
+  if (status === 429 || /rate.?limit|too many requests/.test(combined)) {
+    return {
+      status: status || 429,
+      payload: createAiErrorPayload("rate_limit", "OpenAI rate limit blocked AI generation.", {
+        details: rawMessage,
+        code: rawCode || "OPENAI_RATE_LIMIT",
+      }),
+    };
+  }
+
+  if (status === 404 || /model|not found|unsupported/.test(combined)) {
+    return {
+      status: status || 404,
+      payload: createAiErrorPayload("model_error", "The configured OpenAI model is unavailable.", {
+        details: rawMessage,
+        code: rawCode || "OPENAI_MODEL_ERROR",
+      }),
+    };
+  }
+
+  return {
+    status: status || 500,
+    payload: createAiErrorPayload("unknown", "AI generation failed for an unknown OpenAI API reason.", {
+      details: rawMessage,
+      code: rawCode || rawType || "AI_DRAFT_FAILED",
+    }),
+  };
+}
+
 function normalizeSummaryResult(value, clusterId) {
   const keyPoints = Array.isArray(value?.keyPoints) ? value.keyPoints : [];
   const cautions = Array.isArray(value?.cautions) ? value.cautions : [];
@@ -660,6 +736,9 @@ app.get("/api/analysis-draft/health", (_request, response) => {
       openaiConfigured: false,
       model: openAiSummaryModel,
       error: "OPENAI_API_KEY is missing",
+      message: "OPENAI_API_KEY is missing",
+      status: 200,
+      errorType: "missing_key",
       code: "OPENAI_API_KEY_MISSING",
     });
     return;
@@ -692,6 +771,9 @@ app.post("/api/analysis-draft", async (request, response) => {
     response.status(400).json({
       error: "テーマと自分の意見を入力してください。",
       details: "AI仮生成には theme と userOpinion が必要です。",
+      message: "theme and userOpinion are required.",
+      status: 400,
+      errorType: "input_error",
       code: "AI_DRAFT_INPUT_MISSING",
     });
     return;
@@ -701,6 +783,9 @@ app.post("/api/analysis-draft", async (request, response) => {
     response.status(400).json({
       error: "OPENAI_API_KEY が設定されていません。",
       details: ".env に OPENAI_API_KEY を設定し、server.js を再起動してください。",
+      message: "OPENAI_API_KEY is missing in the server runtime.",
+      status: 400,
+      errorType: "missing_key",
       code: "OPENAI_API_KEY_MISSING",
     });
     return;
@@ -779,7 +864,10 @@ app.post("/api/analysis-draft", async (request, response) => {
     if (!parsed) {
       response.status(500).json({
         error: "AI応答をJSONとして解析できませんでした。",
+        message: "OpenAI response could not be parsed as JSON.",
         details: content.slice(0, 500),
+        status: 500,
+        errorType: "json_parse_error",
         code: "AI_RESPONSE_PARSE_FAILED",
       });
       return;
@@ -787,10 +875,14 @@ app.post("/api/analysis-draft", async (request, response) => {
 
     response.json(normalizeAnalysisDraftResult(parsed));
   } catch (error) {
-    response.status(500).json({
+    const classified = classifyOpenAiError(error);
+    response.status(classified.status).json({
       error: "AI分析設定の仮生成に失敗しました。",
-      details: error.message || "",
-      code: "AI_DRAFT_FAILED",
+      message: classified.payload.message,
+      details: classified.payload.details,
+      status: classified.status,
+      errorType: classified.payload.errorType,
+      code: classified.payload.code,
     });
   }
 });
@@ -885,6 +977,8 @@ app.post("/api/analysis-draft", async (request, response) => {
     response.status(500).json({
       error: "AI仮生成に失敗しました。",
       detail: error.message || "",
+      errorType: classifyOpenAiError(error).payload.errorType,
+      code: classifyOpenAiError(error).payload.code,
     });
   }
 });
